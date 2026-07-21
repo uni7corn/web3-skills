@@ -1,50 +1,73 @@
 # web3-skills
 
-Web3 security skills kit — smart contract auditing, blockchain client auditing, and on-chain exploit investigation.
+[![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](./LICENSE)
+[![Immunefi: $22K](https://img.shields.io/badge/Immunefi-$22K-4B275F.svg)](https://immunefi.com/profile/DARKNAVY/)
+[![Claude Code｜Codex](https://img.shields.io/badge/Claude_Code\|Codex-Skill-F96854.svg)](https://docs.anthropic.com/en/docs/claude-code)
+
+Web3 security skills for [Claude Code](https://docs.anthropic.com/en/docs/claude-code) and [Codex](https://openai.com/codex) — smart contract auditing, blockchain client auditing, and on-chain exploit investigation.
 
 ## Skills
 
-| Skill | Description |
-|-------|-------------|
-| [**contract-auditor**](./contract-auditor/) | Security audit for smart contracts |
-| [**client-auditor**](./client-auditor/) | Security audit for blockchain client codebases (Go, Rust, C/C++, etc.) |
-| [**exploit-investigator**](./exploit-investigator/) | On-chain attack transaction investigation and incident reporting |
+| Skill | Invoke | Description |
+|-------|--------|-------------|
+| [**contract-auditor**](./contract-auditor/) | `/contract-auditor [path] [deep]` | Solidity security auditor — DFS-based context mapping, parallel hunt agents, optional adversarial falsifier |
+| [**client-auditor**](./client-auditor/) | `/client-auditor <start\|verify\|report> [path]` | Blockchain node auditor (Go, Rust, C/C++) — 20 vulnerability pattern families across P2P, consensus, RPC, and memory safety; three explicit phases with disk-anchored audit state |
+| [**exploit-investigator**](./exploit-investigator/) | `/exploit-investigator 0x<tx> <chain>` | On-chain exploit investigator — traces attack transactions, reconstructs exploit logic, Analyst-Validator debate loop, optional Foundry PoC ⚠️ [requires Python env + API keys](./exploit-investigator/README.md#setup) |
 
-See each skill's README for usage details.
+### contract-auditor
+
+```bash
+/contract-auditor                   # scan production Solidity sources
+/contract-auditor deep              # adds adversarial falsifier pass
+/contract-auditor src/Vault.sol     # review specific file(s)
+```
+
+### client-auditor
+
+Three explicit phases — do not silently chain. Each phase stops after its own completion gate.
+
+```bash
+/client-auditor start [path]        # recon + hunt drafts + inventory; stops after findings/ is populated
+/client-auditor verify [path]       # verify Medium+ findings in place (frontmatter + ## Verification body)
+/client-auditor verify [path] deep  # also run 4 depth lenses + adversarial review
+/client-auditor report [path]       # render report.md from existing findings; no validation
+```
+
+### exploit-investigator
+
+```bash
+/exploit-investigator <tx_hash> <chain>                  # investigate a transaction
+/exploit-investigator <tx_hash> eth "suspected oracle manipulation"   # with hints
+/exploit-investigator briefs/incident.md                   # from a pre-written brief
+/exploit-investigator poc 0x<tx_hash>                      # generate Foundry PoC
+```
 
 ## Install
 
-Tell your Coding agent:
+**Claude Code|Codex** :
 
 ```
-Install skill https://github.com/DarkNavySecurity/web3-skills/
+Install skills in https://github.com/DarkNavySecurity/web3-skills/
 ```
 
-Or clone manually:
-
-```bash
-git clone https://github.com/DarkNavySecurity/web3-skills.git
-bash web3-skills/install.sh
-```
-
-## Update
+Or update an existing install:
 
 ```
-Update skill https://github.com/DarkNavySecurity/web3-skills/
+Update skills in https://github.com/DarkNavySecurity/web3-skills/
 ```
+
+> **Note:** exploit-investigator requires additional setup (Python environment, API keys). See its [README](./exploit-investigator/README.md#setup).
 
 ## Track Record
 
-**Smart Contract Auditing** — $21K earned on [Immunefi](https://immunefi.com/)
+**Smart Contract Auditing** — $21K earned on [Immunefi](https://immunefi.com/profile/DARKNAVY/)
 
-<img src="./images/immunefi.png" width="420" />
+**Blockchain Client Auditing**
+- ~$800 earned on the [Firedancer Immunefi Competition](https://immunefi.com/audit-competition/firedancer-v1-audit-comp/information/)
+- $1K earned on [Immunefi](https://immunefi.com/profile/DARKNAVY/) (1 Medium finding)
+- Independently discovered a vulnerability in [rippled](https://github.com/XRPLF/rippled) (XRP Ledger), officially acknowledged and patched
 
-**Blockchain Client Auditing** — Independently discovered a vulnerability in [rippled](https://github.com/XRPLF/rippled) (XRP Ledger), officially acknowledged and patched
-
-<img src="./images/rippled_bug.png" width="420" />
-
-**Onchain Exploit Analysis** — Artifacts in [web3-exploit-analysis](https://github.com/DarkNavySecurity/web3-exploit-analysis), also posted on [![X](https://img.shields.io/badge/Defi_Nerd-000000?logo=x&logoColor=white)](https://x.com/Defi_Nerd_sec)
-
+**Onchain Exploit Analysis** — 60+ artifacts in [web3-exploit-analysis](https://github.com/DarkNavySecurity/web3-exploit-analysis), also posted on [![X](https://img.shields.io/badge/Defi_Nerd-000000?logo=x&logoColor=white)](https://x.com/Defi_Nerd_sec)
 
 ## License
 

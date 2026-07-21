@@ -12,7 +12,6 @@ A library of Web3 security skills for Claude Code. Each skill is a focused, self
 client-auditor/             # Security audit of blockchain client codebases (Go, Rust, C++)
 contract-auditor/           # Solidity security audit with adversarial reasoning and context building
 exploit-investigator/       # On-chain attack transaction analysis and incident reporting
-install.sh                  # Sync skills to ~/.claude/skills/
 CLAUDE.md                   # This file (read by Claude Code)
 ```
 

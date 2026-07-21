@@ -26,13 +26,12 @@ Example: if cwd is `/home/user/myprotocol`, write to `./myprotocol-contract-audi
 Immediately below the title, one line:
 
 ```
-`File1.sol` · `File2.sol` · <mode> · <YYYY-MM-DD> · threshold <N>
+`File1.sol` · `File2.sol` · <mode> · <YYYY-MM-DD>
 ```
 
 - List every in-scope file as a backtick span, separated by ` · `
 - `<mode>` is one of: `default` / `DEEP` / `filename`
 - `<YYYY-MM-DD>` is today's date
-- `<N>` is the confidence threshold (default 60)
 
 ---
 
@@ -41,20 +40,42 @@ Immediately below the title, one line:
 Immediately after the header line, before any findings:
 
 ```
-| # | Score | Title |
-|---|-------|-------|
-| 1 | [100] | Title of finding 1 |
-| 2 | [85]  | Title of finding 2 |
-|   |  ·    |                   |
-| 3 | [75]  | Title of finding 3 |
-| 4 | [60]  | Title of finding 4 |
+| # | Severity | Title |
+|---|----------|-------|
+| 1 | Critical | Title of finding 1 |
+| 2 | High     | Title of finding 2 |
+| 3 | Medium   | Title of finding 3 |
+| 4 | Low      | Title of finding 4 |
+| 5 | Info     | Title of finding 5 |
 ```
 
 Rules:
-- Sort by confidence descending.
-- The `·` row is the only separator between above-threshold and below-threshold findings.
-- Scores in brackets: `[100]`, `[85]`, `[75]`.
+- Sort by severity: Critical → High → Medium → Low → Design Advisory → Informational.
+- Within the same severity, order by impact (most impactful first).
 - Titles must match the `##` heading titles exactly.
+- Use short labels in the table: `Critical`, `High`, `Medium`, `Low`, `Design`, `Info`.
+- If there are no findings, include one row: `| - | None | No confirmed findings |`.
+
+Then `---` before the coverage summary.
+
+---
+
+## Section 2.5 — Coverage Summary
+
+After the findings summary table and before the findings section, include:
+
+### Coverage
+
+| Contract | Functions Analyzed | Analysis |
+|----------|-------------------|----------|
+| <Contract.sol> | N / M | DFS by Agent 1 (deposit paths) |
+| <Contract.sol> | N / M | DFS by Agent 2 (redeem paths); boundary-check by Agent 1 |
+
+- M = total entry points from the context map (shared ground truth across all agents)
+- N = entry points with at least one line-by-line DFS pass (from agent coverage logs)
+- "boundary-check" = agent followed a call into this contract but only verified the interface, state architecture, and cross-contract dependency surface, not full internals. Boundary checks do not count toward N.
+- If any contract has coverage < 80%, flag it as a gap
+- If follow-up analysis was spawned for gaps, note what it targeted
 
 Then `---` before the findings section.
 
@@ -64,10 +85,12 @@ Then `---` before the findings section.
 
 Each finding follows this exact structure, separated by `---`:
 
-```
-## [score] N. Title of Finding
+~~~~markdown
+## [Severity] N. Title of Finding
 
-> `entryFunction(params)` → `calledFunction` → `vulnerableOperation` → **outcome**
+> `EntryContract.entryFunction(params)`
+>   → `calledFunction()`
+>     → `vulnerableOperation()` → **outcome**
 
 `ContractName.functionName` · guard: **none**
 
@@ -77,38 +100,51 @@ Each finding follows this exact structure, separated by `---`:
 
 **Description** — <one sentence: what the code does wrong and how it is exploited>
 
+**Assumptions** — <conditions assumed but not verified; what validation would confirm or disprove>
+
 ```diff
 - the vulnerable line or lines
 + the fixed line or lines  // brief reason why this fixes it
 ```
 
 ---
-```
+~~~~
 
 ### 3a — The `##` heading
 
-Format: `## [score] N. Title`
+Format: `## [Severity] N. Title`
 
-- `[score]` is the confidence number in brackets: `[100]`, `[85]`, `[75]`
+- `[Severity]` is one of: `[Critical]`, `[High]`, `[Medium]`, `[Low]`, `[Design Advisory]`, `[Informational]`
 - `N` is the sequential finding number
 - Title is concise (≤10 words), describes the root cause not the symptom
 
-Good: `## [95] 1. Unchecked Return Value Enables Double Withdrawal`
-Bad:  `## [95] 1. Missing Input Validation in withdraw Function`
+Good: `## [High] 1. Unchecked Return Value Enables Double Withdrawal`
+Bad:  `## [High] 1. Missing Input Validation in withdraw Function`
 
 ### 3b — The attack path blockquote
 
-Format: `> backtick-chain → backtick-chain → ... → **plain outcome**`
+Use indentation to show call depth. Each `>` line is one level in the call chain.
 
 Rules:
-- Every function name and variable is wrapped in backticks: `` `withdraw(amount)` ``
-- Arrows are ` → ` (space, right arrow, space)
-- The final outcome is **bold plain text**, not a function name: → **drain pool**
-- Keep to one `>` line where possible. If the chain is long, break into two `>` lines.
+- Every function name is wrapped in backticks: `` `withdraw(amount)` ``
+- Indent with 2 spaces per call depth level after `> `
+- Arrows ` → ` connect calls at the same depth, or prefix a deeper call
+- The final outcome is **bold plain text**: → **drain pool**
 - Do not write prose in the blockquote. It is a call chain only.
 
-Good: `` > `deposit(token, amt)` → `_updateBalance` → `withdraw(amt+1)` → **drain reserve** ``
-Bad:  `> The attacker calls deposit and then withdraws more than they put in`
+Format:
+```
+> `<Contract.entryFunction(params)>`
+>   → `<calledFunction()>`
+>     → `<deeperFunction()>` → **<outcome>**
+```
+
+Multiple entry points converging on one path use ` / ` on the first line:
+```
+> `<ContractA.entry()>` / `<ContractB.entry()>`
+>   → `<sharedFunction()>`
+>     → `<vulnerableOp()>` → **<outcome>**
+```
 
 **For Low/Informational findings**: The blockquote can describe the code path to the concern rather than a full attack chain.
 
@@ -154,14 +190,34 @@ Structure: what the code does wrong → how the attacker exploits it → what th
 Good: `` **Description** — `withdraw` uses `balanceOf(address(this))` instead of internal accounting; a flash-loan deposit inflates the balance, allowing the caller to extract more than their share. ``
 Bad:  `**Description** — The withdraw function has a vulnerability that allows attackers to steal funds.`
 
-### 3g — The diff block (above-threshold findings only)
+### 3f+ — Assumptions (Critical / High / Medium only)
+
+Format: `**Assumptions** — <text>`
+
+State conditions not fully verified, and what validation would confirm or disprove.
+
+- Good: `assumes token whitelist includes fee-on-transfer tokens; not verified whether admin restricts token list. Manual review of deployment config would confirm.`
+- Good: `requires oracle staleness > 1 hour; Chainlink heartbeat for this pair not checked. Verify heartbeat interval for the specific price feed.`
+- Bad: `some assumptions exist`
+
+**Omit for Low/Informational/Design Advisory findings.**
+
+### 3f++ — Design Intent (Design Advisory only)
+
+Format: `**Design Intent** — <quote or citation from code NatSpec/comments>`
+
+For Design Advisory findings, replace the Assumptions field with a Design Intent field that cites the documented design decision. Quote the relevant NatSpec, comment, or naming convention that confirms the behavior is intentional.
+
+**Omit for all other severity levels.** Design Advisory findings also omit the diff block (same as Low/Informational).
+
+### 3g — The diff block (Critical / High / Medium only)
 
 Rules:
 - Show real code from the contract, not pseudocode.
 - The `-` lines must match the actual source exactly (or be a faithful excerpt).
 - The `+` lines are the minimal fix — do not refactor surrounding code.
 - Add a `// comment` on the `+` line only when the reason is non-obvious.
-- **Omit the diff block entirely for below-threshold findings.** No fix section, no placeholder.
+- **Omit the diff block entirely for Low/Design Advisory/Informational findings.** No fix section, no placeholder.
 
 ---
 
@@ -169,23 +225,31 @@ Rules:
 
 **IMPORTANT: The example below is a formatting template only. Do NOT treat these as real findings or reproduce them in your output. Your findings must come exclusively from analyzing the actual source code.**
 
-```
+~~~~markdown
 # 🔐 contract-auditor — <ProjectName>
 
-`<File>.sol` · <mode> · <YYYY-MM-DD> · threshold <N>
+`<File>.sol` · <mode> · <YYYY-MM-DD>
 
-| # | Score | Title |
-|---|-------|-------|
-| 1 | [score] | <finding title> |
-| 2 | [score] | <finding title> |
-|   |  ·      |                 |
-| 3 | [score] | <below-threshold finding title> |
+| # | Severity | Title |
+|---|----------|-------|
+| 1 | High     | <finding title> |
+| 2 | Medium   | <finding title> |
+| 3 | Low      | <finding title> |
+| 4 | Info     | <finding title> |
+
+### Coverage
+
+| Contract | Functions Analyzed | Analysis |
+|----------|-------------------|----------|
+| <Contract.sol> | N / M | <agent and call paths> |
 
 ---
 
-## [score] 1. <Finding Title>
+## [High] 1. <Finding Title>
 
-> `<entryFunction(params)>` → `<calledFunction>` → `<vulnerableOp>` → **<outcome>**
+> `<Contract.entryFunction(params)>`
+>   → `<calledFunction()>`
+>     → `<vulnerableOp()>` → **<outcome>**
 
 `<Contract.function>` · guard: **<none or guard name>**
 
@@ -195,10 +259,12 @@ Rules:
 
 **Description** — <one sentence: what the code does wrong, how it is exploited, what is gained>
 
+**Assumptions** — <conditions assumed but not verified; what validation would confirm>
+
 ```diff
 - <vulnerable line from actual source>
 + <minimal fix>  // brief reason
 ```
 
 ---
-```
+~~~~

@@ -7,355 +7,180 @@ description: >
 
 # Smart Contract Security Audit
 
-You are the orchestrator of a full-pipeline, parallelized smart contract security audit. Your job is to pre-map the attack surface, enrich DEEP mode with architectural context, spawn four specialized hunt agents with domain-specific pass instructions, then merge and deduplicate their findings into a single report.
+You are the lead auditor of a smart contract security engagement. You form your own understanding of the architecture and threat landscape, then delegate focused analysis to specialist agents. You make final judgment calls on findings quality, deduplication, and coverage.
+
+Mission: find every way to steal funds, lock funds, grief users, or break invariants. Output a severity-ranked findings report with evidence and coverage assessment.
 
 ## Mode Selection
 
-**Exclude pattern** (applies to all modes): skip directories `interfaces/`, `lib/`, `mocks/`, `test/` and files matching `*.t.sol`, `*Test*.sol` or `*Mock*.sol`.
-
-- **Default** (no arguments): scan all `.sol` files using the exclude pattern. Use Bash `find` (not Glob) to discover files.
-- **deep**: same scope as default, but also runs architectural context building (Phase 2) and, after hunt findings are merged, spawns an adversarial reasoning agent (Agent 5) to challenge and stress-test every finding. Slower and more costly.
+- **Default** (no arguments): scan production Solidity sources only. Use Bash `find` (not Glob) to discover files, excluding dependencies, generated artifacts, tests, scripts, and mocks.
+- **deep**: same production-source scope as default, plus an adversarial falsifier agent to challenge every finding after merge.
 - **`$filename ...`**: scan the specified file(s) only.
+
+**Default scope rule:** do not audit tests, scripts, mocks, dependencies, or generated artifacts unless the user explicitly passes those files by name. Exclude obvious dependency/generated paths such as `node_modules/`, root Foundry dependency roots `lib/` and `libs/`, `vendor/`, `dependencies/`, `out/`, `artifacts/`, `cache/`, `broadcast/`, `test/`, `tests/`, `script/`, `scripts/`, `mock/`, and `mocks/`. Do not blanket-exclude production-looking paths such as `src/**/lib` or `contracts/**/lib`; when uncertain, include first-party production code.
 
 **Flags:**
 
-- `--file-output` (off by default): also write the report to a markdown file in the current working directory — `./{project-name}-contract-auditor-{timestamp}.md`. Without this flag, output goes to the terminal only. Never write a report file unless the user explicitly passes `--file-output`.
+- `--file-output` (off by default): also write the report to `./{project-name}-contract-auditor-{timestamp}.md`. Never write a report file unless the user explicitly passes `--file-output`.
 
 ## Version Check
 
-After printing the banner, run two parallel tool calls: (a) Read `~/.claude/skills/contract-auditor/VERSION`, (b) Bash `curl -sf https://raw.githubusercontent.com/DarkNavySecurity/web3-skills/main/contract-auditor/VERSION`. If the remote fetch succeeds and the versions differ, print:
+After printing the banner, resolve `{SKILL_DIR}` to the absolute installation path for this skill on the current host. Then run these two checks in parallel if the host supports parallel reads/commands: (a) read `{SKILL_DIR}/VERSION`, (b) run `curl -sf --connect-timeout 2 --max-time 5 https://raw.githubusercontent.com/DarkNavySecurity/web3-skills/main/contract-auditor/VERSION`. If the remote fetch succeeds and the remote version is greater than the local version, print:
 
 > ⚠️ You are not using the latest version. Please upgrade for best security coverage.
 
 Then continue normally. If the fetch fails (offline, timeout), skip silently.
 
-## Agent Specializations
-
-Four hunt agents, each with a different analysis dimension:
-
-| Agent | Specialization | Pass File |
-|-------|---------------|-----------|
-| 1 | Discovery & Composability | `passes/discovery-composability.md` |
-| 2 | State Integrity & Value Flow | `passes/state-invariants.md` |
-| 3 | Vulnerability Pattern Matching | `passes/vulnerability-patterns.md` |
-| 4 | Boundaries & Cross-Contract | `passes/boundaries-cross-contract.md` |
-
 ---
 
-## Orchestration — Default and `$filename` modes (4 Phases)
+## Orchestration Flow
 
-### Phase 1 — Discovery & Attack Surface
+### Stage 1 — Reconnaissance
 
-Print the banner, run the Version Check, then in the same message make four parallel tool calls:
+Print the banner, run the Version Check, then:
 
-1. Bash `mkdir -p /tmp/contract-auditor-$(date +%Y%m%d-%H%M%S)` — capture the created path as `{session_dir}`. All intermediate files for this audit session go here.
-2. Bash `find` for in-scope `.sol` files per mode selection
-3. Resolve `{resolved_path}`:
+1. Discover in-scope files: Bash `find` for `.sol` files per mode selection (or use specified filenames).
+   - Default/deep discovery command:
+     ```bash
+     find . \
+       \( -type d \( -name 'node_modules' -o -name 'vendor' -o -name 'dependencies' \
+          -o -name 'out' -o -name 'artifacts' -o -name 'cache' -o -name 'broadcast' \
+          -o -name 'test' -o -name 'tests' -o -name 'script' -o -name 'scripts' -o -name 'mock' -o -name 'mocks' \) \) -prune -o \
+       -type f -name '*.sol' \
+         ! -path './lib/*' ! -path './libs/*' \
+         ! -name '*.t.sol' ! -name '*.s.sol' ! -iname '*mock*.sol' -print
+     ```
+   - Do not audit tests, scripts, mocks, dependencies, or generated artifacts by default, including nested package directories in monorepos. Exclude nested `lib/` or `libs/` only when the path is clearly a vendored dependency root, not when it appears inside first-party source roots like `src/` or `contracts/`. If the user explicitly passes one of those files as `$filename`, include it because they intentionally scoped it.
+2. Resolve `{resolved_path}`:
    ```
-   Set {resolved_path} = ~/.claude/skills/contract-auditor/references
-   Verify: Read {resolved_path}/passes/discovery-composability.md (first 3 lines)
-   If Read fails: Glob **/contract-auditor/references/passes/discovery-composability.md
+   Set {resolved_path} = {SKILL_DIR}/references
+   Verify: Read {resolved_path}/knowledge/checklist.md (first 3 lines)
+   If Read fails: use the host's file search to find contract-auditor/references/knowledge/checklist.md
      and derive {resolved_path} from the result (two levels up).
    ```
-4. Spawn EP subagent (foreground, `model: "sonnet"`) using the **EP Subagent Prompt** section below. For `$filename` mode, use the `$filename` variant of the EP subagent prompt (skip `find`, analyze only the specified files).
+3. Create a temp directory with `mktemp -d "${TMPDIR:-/tmp}/contract-auditor.XXXXXX"` — capture as `{temp_dir}`. Do not use a timestamp-only directory; concurrent runs must not share state.
 
-**State checkpoint — after Phase 1, record these values (preserve across context compaction):**
-```
-session_dir: /tmp/contract-auditor-YYYYMMDD-HHMMSS
-resolved_path: ~/.claude/skills/contract-auditor/references
-scope: [list of in-scope .sol file paths]
-mode: default | deep | filename
-phase: 1 complete
-```
+**State checkpoint — preserve these values across context compaction:**
+- `temp_dir`: the created temp directory path
+- `resolved_path`: the resolved references directory path
+- `scope`: list of in-scope .sol file paths
+- `mode`: default | deep | filename
 
-### Phase 2 — Bundle Preparation
+### Stage 2 — Context Building & Analysis
 
-Read only the files the orchestrator needs for agent prompts and report generation:
+Read `{resolved_path}/agents/context-and-analysis-agent.md`.
 
-1. Read `{resolved_path}/agents/hunt-agent.md`
-2. Read `{resolved_path}/report-formatting.md`
+**Delegate context building AND analysis to a single subagent.** Use the host's default general-purpose subagent facility with the full text of `context-and-analysis-agent.md` and:
+- In-scope file list
+- Context output directory: `{temp_dir}/context/`
+- Analysis output file path: `{temp_dir}/analysis.md`
 
-Do NOT read `finding-protocol.md`, `vuln-kb.md`, `heuristics.md`, `kb-index.md`, or pass files into orchestrator context — they go into bundles via `cat` only.
+The subagent reads all source files, builds the context map (writing files to `{temp_dir}/context/`), then immediately derives the threat model, trust model, verifies call paths, and produces the agent allocation plan (writing to `{temp_dir}/analysis.md`). Combining these into one agent avoids the serial handoff where a second agent re-reads all the context files the first agent just wrote.
 
-Then assemble bundles:
+**Read the analysis output.** Read `{temp_dir}/analysis.md`. This gives you:
+- Threat model summary (concise paragraph)
+- Trust model table (roles, trust levels, severity ceilings)
+- Per-agent allocation blocks (each with assigned call paths, primary/boundary files, cross-agent hints)
 
-1. Write the EP subagent output verbatim to `{session_dir}/ep-map.md` using the **Write tool** (not Bash heredoc).
-2. Bash: in a single command, use `cat` to concatenate files into four per-agent bundle files (`{session_dir}/agent-{1,2,3,4}-bundle.md`) — each contains:
+The main thread does NOT need to read the raw context files — the analysis output contains everything needed for subsequent stages.
 
-```
-{session_dir}/ep-map.md contents
----
-All in-scope .sol files (with ### path headers and fenced code blocks)
----
-validation/finding-protocol.md
----
-report-formatting.md
----
-knowledge/vuln-kb.md
----
-knowledge/heuristics.md
----
-knowledge/vulnerabilities/kb-index.md
----
-Agent N's specific pass file (passes/discovery-composability.md / passes/state-invariants.md / passes/vulnerability-patterns.md / passes/boundaries-cross-contract.md)
-```
+**State checkpoint — append to Stage 1 checkpoint:**
+- `context_dir`: path to the context directory (`{temp_dir}/context/`)
+- `analysis_file`: path to the analysis output (`{temp_dir}/analysis.md`)
+- `threat_model`: the threat model summary (from analysis output)
+- `trust_model`: the trust model table (from analysis output)
+- `agent_allocation`: the per-agent allocation blocks (from analysis output)
 
-Print line counts for all four files. Every agent receives the same EP map, codebase, validation protocol, knowledge base, and heuristics — only the pass file differs per agent.
+### Stage 3 — Delegated Hunting
 
-### Phase 3 — Parallel Deep Hunting
+Read `{resolved_path}/agents/hunt-agent.md`.
 
-In a single message, spawn Agents 1–4 as parallel foreground Agent tool calls (do NOT use `run_in_background`).
+Spawn hunt agents in parallel using the host's default general-purpose subagent facility. Do not run them as detached/background jobs; the orchestrator must wait for each output file.
 
-- **Agents 1–4** (specialized hunt agents) — spawn with `model: "sonnet"`. Each agent prompt must contain the full text of `hunt-agent.md` (read in Phase 2, paste into every prompt). After the instructions, add: `Your bundle file is {session_dir}/agent-N-bundle.md (XXXX lines). Your assigned pass file is at the end of the bundle — it defines your analysis dimension. Write your findings to {session_dir}/agent-N-output.md and return only a short summary.` (substitute the real line count and describe the pass: "Discovery & Composability" / "State Integrity & Value Flow" / "Vulnerability Pattern Matching" / "Boundaries & Cross-Contract").
+For each agent, use the corresponding allocation block from `{temp_dir}/analysis.md` to construct the prompt. Each agent prompt contains:
+1. Full text of `hunt-agent.md`
+2. **Assigned call paths**: copy the call paths from this agent's allocation block (already includes file:line detail)
+3. **Cross-agent state hints**: copy the hints table from this agent's allocation block
+4. **Context file paths**: provide the path to `{context_dir}/` and list the primary and boundary files from this agent's allocation block. The agent reads these from disk — do NOT inline their content. For boundary contracts, tell the agent to read only the Entry Points, State Architecture, and Cross-Contract Dependencies sections. Do NOT point agents to `index.md`, `call-paths.md`, or `state-coupling.md`.
+5. **Threat model summary**: copy from the analysis output
+6. **Trust model**: copy the trust model table from the analysis output. The agent must apply severity ceilings when a finding depends on a trusted role's action.
+7. **Checklist file path**: `{resolved_path}/knowledge/checklist.md` — the agent reads this from disk on demand. Do NOT inline the checklist content in the prompt.
+8. Path to `finding-protocol.md` and `report-formatting.md` (under `{resolved_path}`)
+9. Output file path: `{temp_dir}/agent-N-output.md`
 
-Agents write their own output files. The orchestrator receives only short summaries (finding counts + titles).
+Agents read source files and references themselves via DFS traversal of their assigned paths. The orchestrator receives only short summaries (finding counts + one-line titles).
 
-**State checkpoint — after Phase 3, append to the Phase 1 checkpoint:**
-```
-phase: 3 complete
-agent_summaries:
-  agent-1: N findings — [score] title, [score] title, ...
-  agent-2: N findings — [score] title, [score] title, ...
-  agent-3: N findings — [score] title, [score] title, ...
-  agent-4: N findings — [score] title, [score] title, ...
-```
+**State checkpoint — append:**
+- `agent_summaries`: per-agent finding count + one-line titles
 
-### Phase 4 — Report
+### Stage 4 — Merge, Dedup, and Coverage Assessment
 
-Spawn a merge subagent (foreground, `model: "sonnet"`) with this prompt:
+Read all agent output files from `{temp_dir}`. Each hunt output is structured as:
+- `# Confirmed Findings` — the only section to merge and deduplicate as findings
+- `# Dropped Candidates` — reasons candidates were rejected; do not merge these
+- `# Coverage` — coverage accounting only
 
-```
-You are a findings merge agent. Read these four hunt agent output files in parallel:
-- {session_dir}/agent-1-output.md
-- {session_dir}/agent-2-output.md
-- {session_dir}/agent-3-output.md
-- {session_dir}/agent-4-output.md
+Do not treat text outside `# Confirmed Findings` as a finding.
 
-Also read {resolved_path}/report-formatting.md for the output format.
+When moving hunt-agent findings into the final report, normalize their internal `### [Severity] N. Title` headings to the final `## [Severity] N. Title` format required by `report-formatting.md`.
 
-Merge all findings: deduplicate by root cause — when multiple agents find the same underlying issue from different analysis angles, keep the version with the most complete attack path and highest confidence. Sort by confidence highest-first, re-number sequentially, and insert the Below Confidence Threshold separator row (threshold = 75).
+**Dedup** (you do this, leveraging your code understanding):
+1. Group findings by location (contract + function/line range)
+2. Within each group: normalize to root cause — since agents own distinct paths, true duplicates should be rare; they mainly arise at boundary crossings where two agents flagged the same interface issue from opposite sides
+3. Across groups: detect chains — can finding A + finding B compound into a worse attack?
+4. Assign severity to each finding: **Critical**, **High**, **Medium**, **Low**, **Design Advisory**, or **Informational** per `finding-protocol.md`. Sort by severity (Critical → High → Medium → Low → Design Advisory → Informational), re-number sequentially.
 
-Write the final report to {session_dir}/report.md using the Write tool. Include the scope header (per report-formatting.md) and all findings.
+**Coverage assessment**: Use the **Entry Point Census** table from `{temp_dir}/analysis.md` as ground truth — it lists every contract with its total entry point count (M) and function names. Compare agent-reported DFS coverage (N) against this census. Do NOT rely solely on agents' self-reported M values.
+- For each contract in the census: count only entry points that received a line-by-line DFS pass toward N. Track boundary checks separately and mention them in the coverage notes, but do not count boundary checks as DFS coverage. Flag any contract where DFS coverage < M.
+- Are all call paths from the allocation covered by their assigned agent?
+- Are all in-scope contracts covered by at least one agent?
+- If significant gaps exist, spawn targeted follow-up agents for uncovered areas. If a follow-up round produces zero new findings at Medium or above, further rounds are unlikely to be productive — stop.
 
-Return only a short summary: total finding count, above/below threshold counts, and one-line titles.
-```
+**Stopping conditions** — stop hunting when ALL of the following hold:
+(a) all assigned call paths have been analyzed by their agent,
+(b) all in-scope contracts have been covered,
+(c) follow-up round completed or skipped (if no coverage gaps detected),
+(d) marginal return check: if the most recent agent round produced zero new findings at Medium or above, further rounds are unlikely to be productive.
+Do not pursue theoretical completeness.
 
-The orchestrator receives only the merge summary. If `--file-output` is set, print the report file path. Otherwise, Read `{session_dir}/report.md` and print it to terminal.
+### Stage 5 (DEEP only) — Adversarial Challenge
 
----
+Write the merged findings to `{temp_dir}/preliminary-findings.md`.
 
-## Orchestration — DEEP mode (6 Phases)
+Read `{resolved_path}/agents/adversarial-agent.md`.
 
-### Phase 1 — Discovery & Attack Surface
+If there are zero merged findings, skip this stage and state that no falsifier was spawned because there were no findings to challenge.
 
-Identical to default Phase 1 — print banner, run Version Check, four parallel calls: `mkdir -p` for `{session_dir}`, `find`, resolve `{resolved_path}`, EP subagent (foreground, sonnet).
+Spawn **one falsifier agent** using the host's default general-purpose subagent facility:
 
-**State checkpoint — after Phase 1, record these values (preserve across context compaction):**
-```
-session_dir: /tmp/contract-auditor-YYYYMMDD-HHMMSS
-resolved_path: ~/.claude/skills/contract-auditor/references
-scope: [list of in-scope .sol file paths]
-mode: deep
-phase: 1 complete
-```
+**Falsifier** (adversarial-agent.md):
+1. Full text of `adversarial-agent.md`
+2. Path to preliminary findings file: `{temp_dir}/preliminary-findings.md`
+3. Path to context directory: `{context_dir}`
+4. **Agent allocation summary**: copy from analysis output — which call paths were assigned to which agent, and which state variables are shared across agent boundaries
+5. Trust model table (from analysis output)
+6. In-scope file paths
+7. Path to `{resolved_path}/validation/finding-protocol.md` and `{resolved_path}/report-formatting.md`
+8. Output file path: `{temp_dir}/falsifier-output.md`
 
-### Phase 2 — Context Building
+**Merge results:**
+- Incorporate verdicts — keep UPHELD (apply severity adjustments), remove DISPROVED, update DOWNGRADED (lower severity). For cross-finding interactions, note the compounding in the higher-severity finding's description.
+- Re-sort by severity (Critical → High → Medium → Low → Design Advisory → Informational), re-number sequentially.
 
-In a single message, make parallel tool calls. Only read files the orchestrator itself needs — bundle-only files are assembled via `cat` in Phase 3.
+### Stage 6 — Report
 
-**Orchestrator reads** (needed for agent prompts and report generation):
-1. Read `{resolved_path}/agents/hunt-agent.md`
-2. Read `{resolved_path}/agents/adversarial-agent.md`
-3. Read `{resolved_path}/report-formatting.md`
+Read `{resolved_path}/report-formatting.md`.
 
-**Do NOT read** into orchestrator context (these go into bundles via `cat` only):
-- `finding-protocol.md`, `vuln-kb.md`, `heuristics.md`, `kb-index.md`, pass files
+Produce the final report per report-formatting.md structure:
+- Section 1: Report header with scope, mode, date
+- Section 2: Findings summary table (sorted by severity: Critical → High → Medium → Low → Design Advisory → Informational)
+- Section 2.5: Coverage summary — pivot agent coverage logs (which report by call path) into the contract-level table format. M = total entry points per contract from the Entry Point Census in `{temp_dir}/analysis.md`; N = entry points covered by at least one line-by-line DFS pass. Note boundary checks separately in the Analysis column.
+- Section 3: All findings, sorted by severity
 
-**Parallel with the reads above:**
-4. Spawn context subagent (foreground, `model: "opus"`) using the **Context Subagent Prompt** section below — substitute `{EP_MAP}` with the Phase 1 EP subagent output verbatim and `{FILE_LIST}` with the newline-separated list of in-scope file paths.
-
-### Phase 3 — Bundle Preparation
-
-Assemble bundles:
-
-1. Write the EP subagent output to `{session_dir}/ep-map.md` and the context subagent output to `{session_dir}/context.md` using the **Write tool** (two parallel Write calls, not Bash heredoc).
-2. Bash: in a single command, use `cat` to concatenate files into four per-agent bundle files (`{session_dir}/agent-{1,2,3,4}-bundle.md`) — each contains:
-
-```
-{session_dir}/ep-map.md contents
----
-{session_dir}/context.md contents
----
-All in-scope .sol files (with ### path headers and fenced code blocks)
----
-validation/finding-protocol.md
----
-report-formatting.md
----
-knowledge/vuln-kb.md
----
-knowledge/heuristics.md
----
-knowledge/vulnerabilities/kb-index.md
----
-Agent N's specific pass file
-```
-
-Print line counts for all four files.
-
-### Phase 4 — Parallel Deep Hunting
-
-In a single message, spawn Agents 1–4 as parallel foreground Agent tool calls (do NOT use `run_in_background`).
-
-- **Agents 1–4** (specialized hunt agents) — spawn with `model: "sonnet"`. Each agent prompt must contain the full text of `hunt-agent.md` (read in Phase 2, paste into every prompt). After the instructions, add: `Your bundle file is {session_dir}/agent-N-bundle.md (XXXX lines). Your assigned pass file is at the end of the bundle — it defines your analysis dimension. Write your findings to {session_dir}/agent-N-output.md and return only a short summary.` (substitute the real line count and describe the pass).
-
-Agents write their own output files. The orchestrator receives only short summaries (finding counts + titles). Do NOT re-read the output files — they are consumed by the merge subagent in Phase 5.
-
-**State checkpoint — after Phase 4, append:**
-```
-phase: 4 complete
-agent_summaries:
-  agent-1: N findings — [score] title, [score] title, ...
-  agent-2: ...
-  agent-3: ...
-  agent-4: ...
-```
-
-### Phase 5 — Adversarial Challenge
-
-**Step 1 — Merge via subagent.** Spawn a merge subagent (foreground, `model: "sonnet"`) with this prompt:
-
-```
-You are a findings merge agent. Read these four hunt agent output files in parallel:
-- {session_dir}/agent-1-output.md
-- {session_dir}/agent-2-output.md
-- {session_dir}/agent-3-output.md
-- {session_dir}/agent-4-output.md
-
-Also read {resolved_path}/report-formatting.md for the output format.
-
-Merge all findings: deduplicate by root cause — when multiple agents find the same underlying issue from different analysis angles, keep the version with the most complete attack path and highest confidence. Sort by confidence highest-first, re-number sequentially, and insert the Below Confidence Threshold separator row (threshold = 75).
-
-Write the merged list to {session_dir}/preliminary-findings.md using the Write tool. Format using report-formatting.md structure (findings only — no scope header).
-
-Return only a short summary: total finding count, above/below threshold counts, and one-line titles.
-```
-
-The orchestrator receives only the merge summary — it never reads agent 1–4 raw outputs.
-
-**Step 2 — Build Agent 5 bundle.** Bash: use `cat` to concatenate `{session_dir}/preliminary-findings.md`, all in-scope `.sol` files (with `### path` headers and fenced code blocks), `{resolved_path}/validation/finding-protocol.md`, and `{resolved_path}/report-formatting.md` into `{session_dir}/agent-5-bundle.md`; print the line count.
-
-**Step 3 — Spawn Agent 5.** Spawn **Agent 5** (adversarial reasoning) as a single foreground Agent tool call with `model: "opus"`. The agent prompt must contain the full text of `adversarial-agent.md` (read in Phase 2, already in context). After the instructions, add: `Your bundle file is {session_dir}/agent-5-bundle.md (XXXX lines). Write your output to {session_dir}/agent-5-output.md and return only a short summary.` (substitute the real line count).
-
-The orchestrator receives only Agent 5's summary (verdict counts + new finding count).
-
-**State checkpoint — after Phase 5, append:**
-```
-phase: 5 complete
-preliminary: {session_dir}/preliminary-findings.md
-  [score] #1 title, [score] #2 title, ... (one line, from merge summary)
-agent5_verdict: N upheld, N downgraded, N disproved, N new
-agent5_output: {session_dir}/agent-5-output.md
-```
-
-### Phase 6 — Report
-
-**Context reload:** Read `{session_dir}/preliminary-findings.md` and `{session_dir}/agent-5-output.md` only. Do NOT re-read `agent-{1,2,3,4}-output.md` — their content is already distilled into the preliminary findings.
-
-Incorporate Agent 5's output into the final report: for UPHELD findings, keep as-is (or apply score adjustments with reason); for DISPROVED findings, remove from the report; for DOWNGRADED findings, update the score and note the reason; for new findings from Agent 5's independent pass, add them; for cross-finding interactions, note the compounding in the higher-confidence finding's description. Re-sort by confidence, re-number sequentially, and insert the **Below Confidence Threshold** separator row. Print findings directly — do not re-draft or re-describe them. Use report-formatting.md (read in Phase 2) for the scope table and output structure. If `--file-output` is set, write the report to a file (path per report-formatting.md) and print the path.
+If `--file-output` is set, write the report to a file (path per report-formatting.md) and print the path. Otherwise print the report to terminal.
 
 ---
 
-## EP Subagent Prompt
+## Context Map
 
-Use this prompt verbatim when spawning the EP subagent in Phase 1 of all modes.
-
-```
-You are an entry-point analyzer for a Solidity smart contract codebase.
-
-1. Run this find command to discover all in-scope files:
-   find . -name '*.sol' -not -path '*/interfaces/*' -not -path '*/lib/*' -not -path '*/mocks/*' -not -path '*/test/*' ! -name '*.t.sol' ! -name '*Test*.sol' ! -name '*Mock*.sol'
-2. Read every discovered file in parallel.
-3. Extract every externally callable, state-changing function. Exclude `view` and `pure` functions.
-4. Classify each function into one of these four categories:
-   - Public (Unrestricted): callable by any address with no access restriction
-   - Role-Restricted: guarded by a named role (onlyOwner, onlyAdmin, hasRole(X), require(msg.sender == x))
-   - Restricted (Review Required): has some access control pattern but not clearly classifiable from the modifier alone
-   - Contract-Only: callback or integration hook that reverts for EOA callers (e.g. onERC721Received, flash loan callbacks)
-5. Output ONLY the markdown below — no prose, no explanations, no "Files Analyzed" section:
-
-## Entry Point Map
-
-| Category | Count |
-|----------|-------|
-| Public (Unrestricted) | X |
-| Role-Restricted | X |
-| Restricted (Review Required) | X |
-| Contract-Only | X |
-| **Total** | **X** |
-
-### Public (Unrestricted)
-- `functionName(params)` — `path/file.sol:L42`
-  Note if user-controlled params reach external calls
-
-### Role-Restricted
-- `functionName(params)` — `path/file.sol:L15`
-  Restriction: `onlyOwner`
-
-### Restricted (Review Required)
-- `functionName(params)` — `path/file.sol:L20`
-  Pattern: <describe the access control pattern>
-
-### Contract-Only
-- `functionName(params)` — `path/file.sol:L30`
-  Expected caller: <caller description>
-```
-
-**For `$filename` mode:** Replace step 1 with: "Skip the find command. Analyze ONLY these files: [list the specified filenames]. Read them in parallel."
-
----
-
-## Context Subagent Prompt
-
-Use this prompt verbatim when spawning the context subagent in DEEP Phase 2. Substitute `{EP_MAP}` and `{FILE_LIST}` before sending.
-
-```
-You are an architectural context builder for a smart contract security audit. Your output will be injected into security scanner agent bundles — make it precise and useful for identifying vulnerabilities.
-
-DO NOT produce vulnerability findings. Your job is structural context only.
-
-Entry Point Map (from entry-point analysis):
-{EP_MAP}
-
-In-scope files:
-{FILE_LIST}
-
-Workflow:
-1. Read all in-scope .sol files in parallel.
-2. For each Public (Unrestricted) entry point: trace the full call chain within the codebase, identify all state variables mutated, note external calls and their ordering relative to state updates.
-3. For each Role-Restricted entry point: map what privileged state it can mutate and whether the role restriction is implemented robustly (check the modifier/require body, not just its name).
-4. Build a trust boundary map: which contracts are trusted callers, which parameters are user-controlled.
-5. Identify protocol invariants: mathematical or logical conditions that must hold at all times (e.g. totalSupply == sum of balances, reserve0 * reserve1 == k).
-6. Flag complexity hotspots: functions with 3+ external calls, token transfers that precede state updates, user-controlled call targets, initializer patterns with no caller restriction, emergency paths that bypass normal accounting.
-
-Output ONLY the following markdown structure. Total output must be ≤400 lines. No prose outside the structure below:
-
-## Architecture Context
-
-### Trust Boundaries
-- <ContractA> trusts <ContractB> for: [purpose]
-- EOA-callable without restriction: [list key public functions]
-- User-controlled parameters reaching external calls: [list with function context]
-
-### Key Invariants
-- <Contract>: <invariant description>
-- ...
-
-### Complexity Hotspots
-- `<Contract.function>`: <pattern description> — L<line>
-- ...
-
-### Unusual Patterns
-- <description of any pattern that deviates from standard Solidity conventions>
-- ...
-```
+Directory of structured files (`{context_dir}/`) with file:line pointers to every entry point, state variable, value flow, and cross-contract dependency. Built in Stage 2 by subagent, consumed by all subsequent stages. Contains `index.md`, per-contract files, `call-paths.md`, and `state-coupling.md`. Structure defined in `references/agents/context-and-analysis-agent.md`.
